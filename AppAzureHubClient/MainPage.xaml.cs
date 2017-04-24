@@ -71,8 +71,6 @@ namespace AppAzureHubClient
 
             timer.Start();
 
-
-
         }
 
         private void InitStuff()
