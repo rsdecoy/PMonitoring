@@ -33,12 +33,14 @@ namespace AppAzureHubClient
     public sealed partial class MainPage : Page
     {
         static DeviceClient deviceClient;
-       
+        static string iotHubUri = "AHPoolMonitorering.azure-devices.net";
+        static string deviceKey = "C5WR75Lt0Q2Rip5912aa8jS1VJy2BCVTDN4PO+gFqJo=";
+
         private DispatcherTimer timer;
         private const int LED_PIN = 21, WATER_LEVEL_IN_PIN = 6;
         private GpioPin LedPin, WaterLevelPin;
         private GpioPinValue pinValue;
-        
+
         private SolidColorBrush redBrush = new SolidColorBrush(Windows.UI.Colors.Red);
         private SolidColorBrush grayBrush = new SolidColorBrush(Windows.UI.Colors.LightGray);
 
@@ -50,18 +52,43 @@ namespace AppAzureHubClient
 
         private bool TEMPERATUREREAD_ENABLED = true;
 
+        //webIC dallas givare i2c.ROM_NO  = "286b4b6207000051"
+        //Elfa givare "28f876100700007e"
+        static  string ID_WaterTemperature = "28f876100700007e";
+        static string ID_OutDoorAirTemperature = "286b4b6207000051";
+        
+        
         public struct TempSensorProp
         {
             public byte[] romId;
             public string sRomIdname;
             public int ix;
-            public bool detected;
+            public bool SensorDetected;
             public double temperature;
+            public bool readingValid;
         }
+
+        public struct myData
+        {
+            public double data;
+            public int numberofMeasurements;
+        }
+        public class TelemetricData
+        {
+            public myData waterTemp;
+            public myData OutdoorTemp;
+            public myData ORP;
+            public myData PH;
+            public int dataCollections;
+            public DateTime dtStart;
+        }
+        private TelemetricData myTelemetrics = new TelemetricData();
 
         public MainPage()
         {
             this.InitializeComponent();
+
+            myTelemetrics.dtStart = DateTime.Now;
 
             timer = new DispatcherTimer();
             timer.Interval = TimeSpan.FromMilliseconds(3000);
@@ -71,26 +98,43 @@ namespace AppAzureHubClient
 
             timer.Start();
 
+
+
         }
 
         private void InitStuff()
         {
-            TbLog.Text += "init" + "\r\n";
 
-            privateKeys personalConfig = new privateKeys();
+            try
+            {
+                TbLog.Text += "init" + "\r\n";
 
-            deviceClient = DeviceClient.Create(personalConfig.iotHubUri, new DeviceAuthenticationWithRegistrySymmetricKey("myFirstDevice", personalConfig.deviceKey), TransportType.Mqtt);
+                deviceClient = DeviceClient.Create(iotHubUri, new DeviceAuthenticationWithRegistrySymmetricKey("myFirstDevice", deviceKey), TransportType.Mqtt);
 
-            InitGPIO();
-            InitI2c_ADS1015_ADC();
-            
-            if (TEMPERATUREREAD_ENABLED)
-                InitI2C_DS248_100();
+                InitGPIO();
+                InitI2c_ADS1015_ADC();
 
-            TbLog.Text += "init done" + "\r\n";
-                      
-            ProjectStatus.Text = "Water Quality application running";
+                if (TEMPERATUREREAD_ENABLED)
+                    InitI2C_DS248_100();
+                if (myTempSensors[0].SensorDetected)
+                    TBNote.Text = myTempSensors[0].sRomIdname;
+                if (myTempSensors[1].SensorDetected)
+                    TBNote_2.Text = myTempSensors[1].sRomIdname;
+
+
+                TbLog.Text += "init done" + "\r\n";
+
+                ProjectStatus.Text = "Water Quality application running";
+            }
+            catch (Exception ex)
+            {
+                TbLog.Text += "Init Error: " + ex.Message + "\r\n";
+                Task.Delay(3000);
+            }
+
         }
+
+    
 
 
         private void Timer_Tick(object sender, object e)
@@ -100,21 +144,85 @@ namespace AppAzureHubClient
 
         private void DoProgram()
         {
-          
+
+            try
+            {
                 double Ph, Orp, WaterTemp, OutDoorTemp;
                 Ph = Orp = WaterTemp = OutDoorTemp = 0;
 
                 GetWaterQuality(ref Orp, ref Ph);
                 GetWaterLevelinput();
                 GetTemperatures();
-                WaterTemp = myTempSensors[0].temperature;
-                OutDoorTemp = myTempSensors[1].temperature;
 
-                SendDeviceToCloudMessagesAsync(Ph, Orp, WaterTemp, OutDoorTemp);
-
+                //sort correct id out
+                int WaterTempIx = 0;
+                for (int i = 0; i < myTempSensors.Count(); i++)
+                    if (myTempSensors[i].sRomIdname == ID_WaterTemperature)
+                        WaterTempIx = i;
+                int OutdoorTempIx = WaterTempIx==0?1:0;
                 
-                Task.Delay(3000);
-            
+                
+                //get storedata to calc average
+                if (myTempSensors[WaterTempIx].readingValid)
+                {
+                    myTelemetrics.waterTemp.data += myTempSensors[WaterTempIx].temperature;
+                    myTelemetrics.waterTemp.numberofMeasurements++;
+                }
+                if (myTempSensors[OutdoorTempIx].readingValid)
+                {
+                    myTelemetrics.OutdoorTemp.data += myTempSensors[OutdoorTempIx].temperature;
+                    myTelemetrics.OutdoorTemp.numberofMeasurements++;
+                }
+                myTelemetrics.ORP.data += Orp;
+                myTelemetrics.ORP.numberofMeasurements++;
+                myTelemetrics.PH.data += Ph;
+                myTelemetrics.PH.numberofMeasurements++;
+                myTelemetrics.dataCollections++;
+
+
+                //Send data to cloud
+                //TODO, use datetime
+                /*DateTime dt = DateTime.Now();
+                TimeSpan ts = DateTime.Now() - dt;
+                ts.TotalSeconds*/
+
+                if ((DateTime.Now - myTelemetrics.dtStart).TotalSeconds >= 60*5)
+                {
+                    WaterTemp = myTelemetrics.waterTemp.data / myTelemetrics.waterTemp.numberofMeasurements;
+                    OutDoorTemp = myTelemetrics.OutdoorTemp.data / myTelemetrics.OutdoorTemp.numberofMeasurements;
+                    Ph = myTelemetrics.PH.data / myTelemetrics.PH.numberofMeasurements;
+                    Orp = myTelemetrics.ORP.data / myTelemetrics.ORP.numberofMeasurements;
+
+                    //Send data to cloud
+                    SendDeviceToCloudMessagesAsync(Ph, Orp, WaterTemp, OutDoorTemp);
+
+
+                    //clear data
+                    myTelemetrics = new TelemetricData();
+                    myTelemetrics.dtStart = DateTime.Now;
+                }
+
+                //Flash LED + GUI... todo, move to its own timer func
+                if (pinValue == GpioPinValue.High)
+                {
+                    pinValue = GpioPinValue.Low;
+                    LedPin.Write(pinValue);
+                    LED.Fill = redBrush;
+                }
+                else
+                {
+                    pinValue = GpioPinValue.High;
+                    LedPin.Write(pinValue);
+                    LED.Fill = grayBrush;
+                }
+
+
+                //Task.Delay(3000);
+            }
+            catch( Exception ex)
+            {
+                TbLog.Text += "Error: " + ex.Message + "\r\n";
+            }
           
         }
 
@@ -149,75 +257,72 @@ namespace AppAzureHubClient
 
         private void GetTemperatures()
         {
-            if (pinValue == GpioPinValue.High)
-            {
-                pinValue = GpioPinValue.Low;
-                LedPin.Write(pinValue);
-                LED.Fill = redBrush;
-            }
-            else
-            {
-                pinValue = GpioPinValue.High;
-                LedPin.Write(pinValue);
-                LED.Fill = grayBrush;
+           
                 double temperature;
                 if (TEMPERATUREREAD_ENABLED)
                 {
-                    if (myTempSensors[0].detected)
+                    
+                    if (myTempSensors[1].SensorDetected)
                     {
-                        ReadTemperature(ref DS2482_i2c, ref myTempSensors[0].romId, out temperature);
-                        myTempSensors[0].temperature = temperature;
-                        TBNote.Text = myTempSensors[0].sRomIdname + ": " + Convert.ToString(temperature) + " [c]";
-                        
-                    }
-                    if (myTempSensors[1].detected)
-                    {
-                        ReadTemperature(ref DS2482_i2c, ref myTempSensors[1].romId, out temperature);
-                        TBNote_2.Text = myTempSensors[1].sRomIdname + ": " + Convert.ToString(temperature) + " [c]";
+                        ReadTemperature(ref DS2482_i2c, ref myTempSensors[1].romId, out temperature, out myTempSensors[1].readingValid);
                         myTempSensors[1].temperature = temperature;
-                        
-                    }
+                        if(myTempSensors[1].readingValid)
+                            TBNote_2.Text = myTempSensors[1].sRomIdname + ": " + Convert.ToString(temperature) + " [c]";
+                        else
+                            TBNote_2.Text = myTempSensors[1].sRomIdname + ": Invalid";
+
+
                 }
-            }
 
+                    if (myTempSensors[0].SensorDetected)
+                    {
+                        ReadTemperature(ref DS2482_i2c, ref myTempSensors[0].romId, out temperature, out myTempSensors[0].readingValid);
+                        myTempSensors[0].temperature = temperature;
+                        if (myTempSensors[0].readingValid)
+                            TBNote.Text = myTempSensors[0].sRomIdname + ": " + Convert.ToString(temperature) + " [c]";
+                        else
+                            TBNote.Text = myTempSensors[0].sRomIdname + ": Invalid";
+                    }
 
-
+                }
         }
 
 
-        void ResetOneWireAndMatchDeviceRomAddress(ref DS2482_100 i2c, ref byte[] OneWireAddress)
+        void ResetOneWireAndMatchDeviceRomAddress(ref DS2482_100 i2c, ref byte[] OneWireAddress, ref bool isPresent)
         {
-            i2c.OneWireReset();
-            //byte[] OneWireAddress = new byte[] { 0x28, 0xf8, 0x76, 0x10, 0x07, 0x00, 0x00, 0x7e };
-
+            isPresent = i2c.OneWireReset();
+                        
             i2c.OneWireWriteByte(0x55); //RomCommand.MATCH
-
             foreach (var item in OneWireAddress)
             {
                 i2c.OneWireWriteByte(item);
             }
         }
-        void ReadTemperature(ref DS2482_100 i2c, ref byte[] romid, out double temp)
+        void ReadTemperature(ref DS2482_100 i2c, ref byte[] romid, out double temp, out bool temperaturReadValid)
         {
+            bool isPresent = false;
             temp = -999;
-            //byte bret = i2c.ReadStatus(true);
-
+            
             //byte[] romid = i2c.ROM_NO;
-            ResetOneWireAndMatchDeviceRomAddress(ref i2c, ref romid);
-            i2c.OneWireWriteByte(0x44); //Convert_T
-            i2c.EnableStrongPullup();
-            System.Threading.Tasks.Task.Delay(1000).Wait();
-            ResetOneWireAndMatchDeviceRomAddress(ref i2c, ref romid);
-
-            //var scratchpad = ReadScratchpad();
-            i2c.OneWireWriteByte(0xBE);
-            var scratchpadData = new byte[9];
-            for (int i = 0; i < scratchpadData.Length; i++)
-                scratchpadData[i] = i2c.OneWireReadByte();
-            int b3 = ((int)(scratchpadData[1] << 8) + scratchpadData[0]);
-            temp = (double)(b3) * 0.0625;
-
-
+            ResetOneWireAndMatchDeviceRomAddress(ref i2c, ref romid, ref isPresent);
+            if (isPresent)
+            {
+                i2c.OneWireWriteByte(0x44); //Convert_T
+                //i2c.EnableStrongPullup();
+                System.Threading.Tasks.Task.Delay(200).Wait();
+                ResetOneWireAndMatchDeviceRomAddress(ref i2c, ref romid, ref isPresent);
+            }
+            if (isPresent)
+            {
+                //var scratchpad = ReadScratchpad();
+                i2c.OneWireWriteByte(0xBE);
+                var scratchpadData = new byte[9];
+                for (int i = 0; i < scratchpadData.Length; i++)
+                    scratchpadData[i] = i2c.OneWireReadByte();
+                int b3 = ((int)(scratchpadData[1] << 8) + scratchpadData[0]);
+                temp = (double)(b3) * 0.0625;
+            }
+            temperaturReadValid = isPresent;
         }
 
 
@@ -249,7 +354,7 @@ namespace AppAzureHubClient
         private async void InitI2c_ADS1015_ADC()
         {
             var settings = new I2cConnectionSettings(0x4A);  //49 == VDD, 4A == SDA
-            settings.BusSpeed = I2cBusSpeed.FastMode;
+            settings.BusSpeed = I2cBusSpeed.StandardMode;
             var controller = await I2cController.GetDefaultAsync();
             I2cDevice ADC_I2C = controller.GetDevice(settings);    /* Create an I2cDevice with our selected bus controller and I2C settings */
 
@@ -265,7 +370,7 @@ namespace AppAzureHubClient
             const byte ACCEL_I2C_ADDR = 0x1B;         /* 7-bit I2C address of the ADXL345 with SDO pulled low */
             TBNote.Text = "i2c searching..";
             var settings = new I2cConnectionSettings(ACCEL_I2C_ADDR);
-            settings.BusSpeed = I2cBusSpeed.FastMode;
+            settings.BusSpeed = I2cBusSpeed.StandardMode;
             var controller = await I2cController.GetDefaultAsync();
             Temp_I2C = controller.GetDevice(settings);    /* Create an I2cDevice with our selected bus controller and I2C settings */
             TBNote.Text = Temp_I2C.DeviceId;
@@ -310,15 +415,13 @@ namespace AppAzureHubClient
 
 
                 myTempSensors[RomIdIx].ix = RomIdIx;
-                myTempSensors[RomIdIx].detected = true;
+                myTempSensors[RomIdIx].SensorDetected = true;
 
                 //access and read next sensor that is hoocked up to the one wire net.
                 bret = DS2482_i2c.OnoWireNext();
                 RomIdIx++;
             }
-
-            TBNote.Text = myTempSensors[0].sRomIdname;
-            TBNote_2.Text = myTempSensors[1].sRomIdname;
+            
 
 
             byte bstat = DS2482_i2c.ReadStatus(true);
@@ -375,7 +478,8 @@ namespace AppAzureHubClient
                 PH = PhMeas,
                 ORP = OrpMeas,
                 WaterTemp = T1Meas,
-                OutDoorTemp = T2Meas               
+                OutDoorTemp = T2Meas/*,
+                Date_Time = DateTime.Now.ToLocalTime()*/
             };
             var messageString = JsonConvert.SerializeObject(telemetryDataPoint);
             var message = new Message(Encoding.ASCII.GetBytes(messageString));
