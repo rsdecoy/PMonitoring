@@ -25878,10 +25878,10 @@
   },
   "project": {
     "restore": {
-      "projectUniqueName": "C:\\Users\\decoy\\Documents\\Visual Studio 2017\\Projects\\IOT\\AppAzureHubClient\\AppAzureHubClient\\AppAzureHubClient.csproj",
+      "projectUniqueName": "C:\\Users\\decoy\\OneDrive\\Dokument\\Sven's Documents\\Projects\\Rasp Projects\\MyDevelopProjects\\AppAzureHubClient\\AppAzureHubClient\\AppAzureHubClient.csproj",
       "projectName": "AppAzureHubClient",
-      "projectPath": "C:\\Users\\decoy\\Documents\\Visual Studio 2017\\Projects\\IOT\\AppAzureHubClient\\AppAzureHubClient\\AppAzureHubClient.csproj",
-      "projectJsonPath": "C:\\Users\\decoy\\Documents\\Visual Studio 2017\\Projects\\IOT\\AppAzureHubClient\\AppAzureHubClient\\project.json",
+      "projectPath": "C:\\Users\\decoy\\OneDrive\\Dokument\\Sven's Documents\\Projects\\Rasp Projects\\MyDevelopProjects\\AppAzureHubClient\\AppAzureHubClient\\AppAzureHubClient.csproj",
+      "projectJsonPath": "C:\\Users\\decoy\\OneDrive\\Dokument\\Sven's Documents\\Projects\\Rasp Projects\\MyDevelopProjects\\AppAzureHubClient\\AppAzureHubClient\\project.json",
       "projectStyle": "ProjectJson"
     },
     "dependencies": {
